@@ -131,7 +131,7 @@ jobs:
       - name: Upload app-debug.apk
         uses: actions/upload-artifact@v4
         with:
-          name: ToyBola-0.10.5-debug-apk
+          name: ToyBola-0.10.6-debug-apk
           path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -199,6 +199,17 @@ jobs:
 
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@15.26.0 --no-audit --no-fund
+
+      - name: Remove retired Windows function if present
+        working-directory: ${{ steps.project.outputs.dir }}
+        env:
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          firebase functions:delete desktopApplyWrites \
+            --region europe-west1 \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --force || true
 
       - name: Deploy Firestore rules, indexes and Functions
         working-directory: ${{ steps.project.outputs.dir }}
