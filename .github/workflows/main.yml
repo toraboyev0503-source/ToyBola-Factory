@@ -131,7 +131,7 @@ jobs:
       - name: Upload app-debug.apk
         uses: actions/upload-artifact@v4
         with:
-          name: ToyBola-0.11.1-android-debug-apk
+          name: ToyBola-0.11.2-android-debug-apk
           path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -213,39 +213,48 @@ jobs:
         shell: pwsh
         run: .\gradlew.bat :desktopApp:createDistributable :desktopApp:packageExe :desktopApp:packageMsi --stacktrace
 
-      - name: Verify bundled JVM and desktop image
+      - name: Verify packaged Windows launcher
         working-directory: ${{ steps.project.outputs.dir }}
         shell: pwsh
         run: |
           $appRoot = Join-Path (Get-Location) "desktopApp\build\compose\binaries\main\app"
           if (-not (Test-Path $appRoot)) { throw "Compose app image directory not found: $appRoot" }
-          $appDir = Get-ChildItem -Path $appRoot -Directory | Select-Object -First 1
-          if (-not $appDir) { throw "Packaged app directory is missing" }
 
-          $launcher = Get-ChildItem -Path $appDir.FullName -Recurse -File -Filter "ToyBolaFactory.exe" | Select-Object -First 1
-          $javaExe = Get-ChildItem -Path $appDir.FullName -Recurse -File -Filter "java.exe" | Where-Object { $_.FullName -match "runtime[\\/]bin[\\/]java\.exe$" } | Select-Object -First 1
-          $javawExe = Get-ChildItem -Path $appDir.FullName -Recurse -File -Filter "javaw.exe" | Where-Object { $_.FullName -match "runtime[\\/]bin[\\/]javaw\.exe$" } | Select-Object -First 1
-          $jvmDll = Get-ChildItem -Path $appDir.FullName -Recurse -File -Filter "jvm.dll" | Where-Object { $_.FullName -match "runtime[\\/]bin[\\/]server[\\/]jvm\.dll$" } | Select-Object -First 1
+          $launcher = Get-ChildItem -Path $appRoot -Recurse -File -Filter "ToyBolaFactory.exe" | Select-Object -First 1
+          $jvmDll = Get-ChildItem -Path $appRoot -Recurse -File -Filter "jvm.dll" | Where-Object { $_.FullName -match "runtime[\\/]bin[\\/]server[\\/]jvm\.dll$" } | Select-Object -First 1
+          $msi = Get-ChildItem -Path "desktopApp\build\compose\binaries\main\msi" -File -Filter "*.msi" | Select-Object -First 1
+          $exeInstaller = Get-ChildItem -Path "desktopApp\build\compose\binaries\main\exe" -File -Filter "*.exe" | Select-Object -First 1
 
           if (-not $launcher) { throw "ToyBolaFactory.exe launcher missing from distributable" }
-          if (-not $javaExe) { throw "Bundled runtime java.exe missing" }
-          if (-not $javawExe) { throw "Bundled runtime javaw.exe missing" }
           if (-not $jvmDll) { throw "Bundled runtime jvm.dll missing" }
+          if (-not $msi) { throw "Windows MSI installer missing" }
+          if (-not $exeInstaller) { throw "Windows EXE installer missing" }
 
-          & $javaExe.FullName -version
-          if ($LASTEXITCODE -ne 0) { throw "Bundled JVM cannot start" }
-          & $javaExe.FullName --list-modules | Out-File -FilePath "$env:RUNNER_TEMP\toybola-runtime-modules.txt" -Encoding utf8
-          $moduleCount = (Get-Content "$env:RUNNER_TEMP\toybola-runtime-modules.txt").Count
-          if ($moduleCount -lt 20) { throw "Bundled runtime looks unexpectedly trimmed: $moduleCount modules" }
+          # A jpackage/jlink runtime is allowed to omit java.exe/javaw.exe.
+          # The reliable check is to start the packaged native launcher itself.
+          $env:TOYBOLA_SMOKE_TEST = "1"
+          try {
+            $proc = Start-Process -FilePath $launcher.FullName -PassThru
+            if (-not $proc.WaitForExit(20000)) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "Packaged ToyBolaFactory.exe did not complete the JVM smoke test within 20 seconds"
+            }
+            if ($proc.ExitCode -ne 0) {
+              throw "Packaged ToyBolaFactory.exe failed JVM smoke test with exit code $($proc.ExitCode)"
+            }
+          } finally {
+            Remove-Item Env:TOYBOLA_SMOKE_TEST -ErrorAction SilentlyContinue
+          }
 
-          Write-Host "Launcher: $($launcher.FullName)"
+          Write-Host "Launcher smoke test passed: $($launcher.FullName)"
           Write-Host "Bundled JVM: $($jvmDll.FullName)"
-          Write-Host "Bundled modules: $moduleCount"
+          Write-Host "MSI: $($msi.FullName)"
+          Write-Host "EXE installer: $($exeInstaller.FullName)"
 
       - name: Upload Windows app
         uses: actions/upload-artifact@v4
         with:
-          name: ToyBola-0.11.1-windows
+          name: ToyBola-0.11.2-windows
           path: |
             ${{ steps.project.outputs.dir }}/desktopApp/build/compose/binaries/main/exe/*.exe
             ${{ steps.project.outputs.dir }}/desktopApp/build/compose/binaries/main/msi/*.msi
